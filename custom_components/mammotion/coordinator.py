@@ -623,6 +623,17 @@ class MammotionBaseUpdateCoordinator[DataT](DataUpdateCoordinator[DataT]):  # ty
         """Get map data from the device."""
         try:
             await self.manager.start_map_sync(self.device_name)
+            # The MapFetchSaga fetches geometry/hash lists but never the area
+            # *name* list (toapp_all_hash_name).  On firmware whose per-hash
+            # geometry frames don't parse, map.area stays empty, so switch.py's
+            # name re-fetch (gated on geometry hashes existing) never fires and
+            # map.area_name is never populated — leaving the zone switches
+            # uncreated until a config-entry reload happens to repopulate names.
+            # Fetch names explicitly so a single "Sync maps" press reliably
+            # (re)builds the area switches with no reload/restart.  Luba 1 never
+            # provides area_name, so skip it there.
+            if not DeviceType.is_luba1(self.device_name):
+                await self.async_get_area_list()
 
         except EXPIRED_CREDENTIAL_EXCEPTIONS as exc:
             self.update_failures += 1
@@ -2135,7 +2146,13 @@ class MammotionMapUpdateCoordinator(MammotionBaseUpdateCoordinator[MowerInfo]):
                 else 0
             )
             if not device.map.is_map_synced(bol_hash):
-                await self.manager.start_map_sync(self.device_name)
+                # Route the automatic/periodic sync through async_sync_maps (not
+                # manager.start_map_sync directly) so it ALSO fetches the area
+                # name list.  Otherwise area switches only repopulate after a
+                # manual "Sync maps" press — e.g. they'd stay missing after an HA
+                # restart clears the in-memory map until someone pressed the
+                # button.  This makes recovery automatic (within MAP_RETRY_INTERVAL).
+                await self.async_sync_maps()
 
         except DeviceOfflineException as ex:
             if ex.iot_id == self.device.iot_id:
