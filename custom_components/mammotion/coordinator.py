@@ -31,6 +31,7 @@ from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 from mashumaro.exceptions import InvalidFieldValue
 from pymammotion.aliyun.exceptions import (
     CloudSetupError,
@@ -1511,6 +1512,12 @@ class MammotionReportUpdateCoordinator(MammotionBaseUpdateCoordinator[MowingDevi
 
         self._on_stop: list[CALLBACK_TYPE] = []
 
+        # Wall-clock time of the last genuine inbound device report (status /
+        # properties / event push).  Drives the staleness-based wake nudge below
+        # and the "Last update" diagnostic sensor.  Not stamped on periodic poll
+        # early-outs, which only re-emit last-known data.
+        self._last_report_at: datetime.datetime | None = None
+
         self.poll_debouncer = Debouncer(
             hass,
             LOGGER,
@@ -1519,6 +1526,21 @@ class MammotionReportUpdateCoordinator(MammotionBaseUpdateCoordinator[MowingDevi
             function=self._add_ble_device,
             background=True,
         )
+
+    @property
+    def last_report_at(self) -> datetime.datetime | None:
+        """Return when the device last reported to us, or None if never."""
+        return self._last_report_at
+
+    def _mark_reported(self) -> None:
+        """Record that the device just sent us a genuine report."""
+        self._last_report_at = dt_util.utcnow()
+
+    def _seconds_since_report(self) -> float | None:
+        """Seconds since the last genuine device report, or None if never."""
+        if self._last_report_at is None:
+            return None
+        return (dt_util.utcnow() - self._last_report_at).total_seconds()
 
     @callback
     def _async_handle_bluetooth_event(
@@ -1596,8 +1618,70 @@ class MammotionReportUpdateCoordinator(MammotionBaseUpdateCoordinator[MowingDevi
         """Get coordinator data."""
         return device
 
+    async def _async_nudge_quiet_device(self) -> None:
+        """Coax a quiet device back into reporting.
+
+        The classic "only recovers when I open the app" case: a cloud transport
+        is connected but the device has reported itself offline.  Fire a
+        keep-alive + snapshot to wake it.  Called once per REPORT_INTERVAL tick
+        (before the base coordinator early-returns offline), so it stays gentle.
+        """
+        if not (
+            self.data.enabled and not self.is_online() and self.mqtt_transport_connected
+        ):
+            return
+        stale = self._seconds_since_report()
+        if stale is not None and stale <= REPORT_INTERVAL.total_seconds():
+            return
+        LOGGER.debug(
+            "report-coordinator [%s]: device quiet (cloud up, last report %s)"
+            " — nudging with keep-alive + snapshot",
+            self.device_name,
+            "never" if stale is None else f"{stale:.0f}s ago",
+        )
+        try:
+            await self.set_scheduled_updates(True)
+            await self.async_request_report_snapshot()
+        except (
+            DeviceOfflineException,
+            NoTransportAvailableError,
+            CommandTimeoutError,
+            ConcurrentRequestError,
+            BLEUnavailableError,
+        ) as exc:
+            LOGGER.debug(
+                "report-coordinator [%s]: wake nudge failed: %s",
+                self.device_name,
+                exc,
+            )
+
+    async def _async_poll_fresh_state(self) -> None:
+        """Proactively pull a fresh report on the periodic tick.
+
+        ensure_fresh_state is age-guarded (120s) so it no-ops while active
+        mowing keeps MQTT data fresh, and fires a single snapshot only once the
+        idle/docked device has gone quiet — instead of waiting for the app to
+        wake it.
+        """
+        try:
+            await self.async_ensure_fresh_state()
+        except (
+            DeviceOfflineException,
+            NoTransportAvailableError,
+            CommandTimeoutError,
+            ConcurrentRequestError,
+            BLEUnavailableError,
+        ) as exc:
+            LOGGER.debug(
+                "report-coordinator [%s]: freshness poll failed: %s",
+                self.device_name,
+                exc,
+            )
+
     async def _async_update_data(self) -> MowingDevice:
         """Get data from the device."""
+        await self._async_nudge_quiet_device()
+
         if data := await super()._async_update_data():
             return data
 
@@ -1639,6 +1723,8 @@ class MammotionReportUpdateCoordinator(MammotionBaseUpdateCoordinator[MowingDevi
                             exc,
                         )
 
+        await self._async_poll_fresh_state()
+
         return device
 
     async def _async_update_properties(
@@ -1650,6 +1736,7 @@ class MammotionReportUpdateCoordinator(MammotionBaseUpdateCoordinator[MowingDevi
         if not self.is_online():
             await self.set_scheduled_updates(True)
         if device := self.manager.get_device_by_name(self.device_name):
+            self._mark_reported()
             self.async_set_updated_data(device)
 
     async def _async_update_status(self, status: ThingStatusMessage) -> None:
@@ -1660,6 +1747,7 @@ class MammotionReportUpdateCoordinator(MammotionBaseUpdateCoordinator[MowingDevi
             await self.set_scheduled_updates(True)
             self.hass.async_create_task(self.async_request_refresh())
         if device := self.manager.get_device_by_name(self.device_name):
+            self._mark_reported()
             self.async_set_updated_data(device)
 
     async def _async_update_event_message(self, event: ThingEventMessage) -> None:
@@ -1669,6 +1757,7 @@ class MammotionReportUpdateCoordinator(MammotionBaseUpdateCoordinator[MowingDevi
         if not self.is_online():
             await self.set_scheduled_updates(True)
         if device := self.manager.get_device_by_name(self.device_name):
+            self._mark_reported()
             self.async_set_updated_data(device)
 
     async def _async_setup(self) -> None:
