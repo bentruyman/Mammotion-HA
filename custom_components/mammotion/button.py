@@ -320,47 +320,61 @@ def async_add_task_entities(
         return
 
     button_entities: list[MammotionTaskButtonSensorEntity] = []
-    tasks = list(map(str, coordinator.data.map.plan.keys()))
-    new_tasks = set(tasks) - added_tasks
+    current = {str(plan_id) for plan_id in coordinator.data.map.plan}
+    new_tasks = current - added_tasks
 
-    if new_tasks:
-        for task_id in new_tasks:
-            existing_plan: Plan | None = next(
+    for task_id in new_tasks:
+        # Keys are normally str (plan_id), but `current` is stringified
+        # defensively — fall back to matching the plan_id field if the
+        # direct lookup misses.
+        existing_plan: Plan | None = coordinator.data.map.plan.get(task_id)
+        if existing_plan is None:
+            existing_plan = next(
                 (
                     plan
                     for plan in coordinator.data.map.plan.values()
-                    if plan.plan_id == task_id
+                    if str(plan.plan_id) == task_id
                 ),
                 None,
             )
+        if existing_plan is None:
+            continue
 
-            if existing_plan is None:
-                del coordinator.data.map.plan[task_id]
-                return
-
-            base_plan_button_entity = MammotionTaskButtonSensorEntityDescription(
-                key=task_id,
-                translation_key="task",
-                translation_placeholders={"name": existing_plan.task_name},
-                plan_id=task_id,
-                name=existing_plan.task_name,
-                press_fn=lambda coord, value: (coord.start_task(value)),
-            )
-            entity = MammotionTaskButtonSensorEntity(
-                coordinator, base_plan_button_entity
-            )
-            button_entities.append(entity)
-            task_entities_by_id[task_id] = entity
-            added_tasks.add(task_id)
+        base_plan_button_entity = MammotionTaskButtonSensorEntityDescription(
+            key=task_id,
+            translation_key="task",
+            translation_placeholders={"name": existing_plan.task_name},
+            plan_id=task_id,
+            name=existing_plan.task_name,
+            press_fn=lambda coord, value: coord.start_task(value),
+        )
+        entity = MammotionTaskButtonSensorEntity(coordinator, base_plan_button_entity)
+        button_entities.append(entity)
+        task_entities_by_id[task_id] = entity
+        added_tasks.add(task_id)
 
     _update_task_names(coordinator, added_tasks, task_entities_by_id)
 
-    old_tasks = set(tasks) - added_tasks
-    if old_tasks:
+    # Stale buttons: tracked but no longer on the device (previously this set
+    # was inverted — `current - added_tasks` — which is always empty after the
+    # add loop, so dead task buttons were never removed).  Gate on `current`
+    # being non-empty: the plan dict is transiently empty after an RTK move /
+    # area rebuild while schedules re-sync, and that must not mass-remove all
+    # buttons.
+    old_tasks = added_tasks - current
+    if current and old_tasks:
         async_remove_entities(coordinator, old_tasks)
         for plan in old_tasks:
             added_tasks.remove(plan)
             task_entities_by_id.pop(plan, None)
+
+    # Ghost registry entries from previous sessions (plan deleted/recreated in
+    # the app while HA was down) — same dedup the area switches get.
+    if current:
+        _async_clean_stale_task_registry_entries(
+            coordinator, current, set(task_entities_by_id)
+        )
+
     if button_entities:
         async_add_entities(button_entities)
 
@@ -373,10 +387,41 @@ def async_remove_entities(
     registry = er.async_get(coordinator.hass)
     for task in old_tasks:
         entity_id = registry.async_get_entity_id(
-            BUTTON_DOMAIN, DOMAIN, f"{coordinator.device_name}_{task}"
+            BUTTON_DOMAIN, DOMAIN, f"{coordinator.unique_name}_{task}"
         )
         if entity_id:
             registry.async_remove(entity_id)
+
+
+def _async_clean_stale_task_registry_entries(
+    coordinator: MammotionBaseUpdateCoordinator,
+    current_ids: set[str],
+    live_ids: set[str],
+) -> None:
+    """Remove task button registry entries whose plan ids no longer exist.
+
+    Task button unique_ids follow ``{unique_name}_{plan_id}`` where plan_id is
+    an all-digit string of at least 13 characters (pymammotion generates a
+    13-digit ms timestamp + 8 random digits; the static button keys like
+    ``start_map_sync`` are non-numeric), so the suffix shape identifies task
+    buttons unambiguously.  Live ids are skipped — those are managed by the
+    add/removal passes above.
+    """
+    registry = er.async_get(coordinator.hass)
+    prefix = f"{coordinator.unique_name}_"
+
+    for entry in list(registry.entities.values()):
+        if entry.domain != BUTTON_DOMAIN or entry.platform != DOMAIN:
+            continue
+        if not entry.unique_id.startswith(prefix):
+            continue
+        suffix = entry.unique_id[len(prefix) :]
+        if not (suffix.isdigit() and len(suffix) >= 13):
+            continue  # not a mower task button
+        if suffix in live_ids:
+            continue
+        if suffix not in current_ids:
+            registry.async_remove(entry.entity_id)
 
 
 class MammotionSpinoTaskButtonEntity(MammotionBaseSpinoEntity, ButtonEntity):
@@ -496,7 +541,7 @@ def async_add_spino_task_entities(
         registry = er.async_get(coordinator.hass)
         for jobid in old_tasks:
             entity_id = registry.async_get_entity_id(
-                BUTTON_DOMAIN, DOMAIN, f"{coordinator.device_name}_{jobid}"
+                BUTTON_DOMAIN, DOMAIN, f"{coordinator.unique_name}_{jobid}"
             )
             if entity_id:
                 registry.async_remove(entity_id)
