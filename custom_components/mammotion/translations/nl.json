@@ -59,7 +59,8 @@
           "prefer_ble_over_wifi": "Bluetooth verkiezen boven Wi-Fi indien beschikbaar",
           "movement_use_wifi": "Bewegingsopdrachten via Wi-Fi verzenden",
           "mow_path_fetch_enabled": "Maaipad ophalen inschakelen (cloud)",
-          "full_map_fetch_enabled": "Volledig kaart ophalen inschakelen (cloud) — wanneer uit worden alleen gebiednamen opgehaald"
+          "full_map_fetch_enabled": "Volledig kaart ophalen inschakelen (cloud) — wanneer uit worden alleen gebiednamen opgehaald",
+          "keep_last_known_state": "Laatst bekende status behouden in plaats van onbeschikbaar te worden bij verbindingsverlies"
         }
       }
     }

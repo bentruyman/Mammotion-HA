@@ -42,6 +42,7 @@ EXPIRED_CREDENTIAL_EXCEPTIONS = (
 CONF_HAS_CLOUD_ACCOUNT: Final = "has_cloud_account"
 CONF_STAY_CONNECTED_BLUETOOTH: Final = "stay_connected_bluetooth"
 CONF_PREFER_BLE: Final = "prefer_ble_over_wifi"
+CONF_KEEP_LAST_KNOWN_STATE: Final = "keep_last_known_state"
 CONF_MOVEMENT_USE_WIFI: Final = "movement_use_wifi"
 CONF_MOW_PATH_FETCH_ENABLED: Final = "mow_path_fetch_enabled"
 CONF_FULL_MAP_FETCH_ENABLED: Final = "full_map_fetch_enabled"

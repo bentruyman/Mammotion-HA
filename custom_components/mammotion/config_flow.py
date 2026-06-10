@@ -34,6 +34,7 @@ from .const import (
     CONF_BLE_DEVICES,
     CONF_DEVICE_NAME,
     CONF_HAS_CLOUD_ACCOUNT,
+    CONF_KEEP_LAST_KNOWN_STATE,
     CONF_MOVEMENT_USE_WIFI,
     CONF_MOW_PATH_FETCH_ENABLED,
     CONF_PREFER_BLE,
@@ -383,6 +384,9 @@ class MammotionConfigFlowHandler(OptionsFlow):
         self.mow_path_fetch_enabled = config_entry.options.get(
             CONF_MOW_PATH_FETCH_ENABLED, False
         )
+        self.keep_last_known_state = config_entry.options.get(
+            CONF_KEEP_LAST_KNOWN_STATE, True
+        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -416,6 +420,10 @@ class MammotionConfigFlowHandler(OptionsFlow):
                 vol.Optional(
                     CONF_MOW_PATH_FETCH_ENABLED,
                     default=self.mow_path_fetch_enabled,
+                ): cv.boolean,
+                vol.Optional(
+                    CONF_KEEP_LAST_KNOWN_STATE,
+                    default=self.keep_last_known_state,
                 ): cv.boolean,
             }
         )

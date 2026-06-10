@@ -17,7 +17,7 @@ from homeassistant.helpers.device_registry import (
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from pymammotion.data.model.device import PoolCleanerDevice, RTKBaseStationDevice
 
-from .const import DOMAIN
+from .const import CONF_KEEP_LAST_KNOWN_STATE, DOMAIN
 from .coordinator import (
     MammotionBaseUpdateCoordinator,
     MammotionRTKCoordinator,
@@ -135,6 +135,16 @@ class MammotionBaseEntity(CoordinatorEntity[MammotionBaseUpdateCoordinator[Any]]
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
+        # #784: when enabled (default), keep showing the last-known state instead
+        # of flipping to `unavailable` on transient transport loss, as long as we
+        # have data to show.  Staleness stays visible via the "Last update"
+        # diagnostic sensor.
+        config_entry = self.coordinator.config_entry
+        if config_entry is not None and config_entry.options.get(
+            CONF_KEEP_LAST_KNOWN_STATE, True
+        ):
+            return self.coordinator.data is not None
+
         if (
             not self.coordinator.is_online()
             and self.coordinator.mqtt_transport_connected

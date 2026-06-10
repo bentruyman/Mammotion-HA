@@ -59,7 +59,8 @@
           "prefer_ble_over_wifi": "Preferuj Bluetooth zamiast Wi-Fi, gdy dostępne",
           "movement_use_wifi": "Wysyłaj polecenia ruchu przez Wi-Fi",
           "mow_path_fetch_enabled": "Włącz pobieranie ścieżki koszenia (chmura)",
-          "full_map_fetch_enabled": "Włącz pełne pobieranie mapy (chmura) — gdy wyłączone, pobierane są tylko nazwy obszarów"
+          "full_map_fetch_enabled": "Włącz pełne pobieranie mapy (chmura) — gdy wyłączone, pobierane są tylko nazwy obszarów",
+          "keep_last_known_state": "Zachowaj ostatni znany stan zamiast przechodzić w stan niedostępny po utracie połączenia"
         }
       }
     }

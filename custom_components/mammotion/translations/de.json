@@ -59,7 +59,8 @@
           "prefer_ble_over_wifi": "Wenn möglich, Bluetooth statt WLAN verwenden",
           "movement_use_wifi": "Bewegungsbefehle über WLAN senden",
           "mow_path_fetch_enabled": "Mähpfad-Abruf aktivieren (Cloud)",
-          "full_map_fetch_enabled": "Vollständigen Kartenabruf aktivieren (Cloud) — wenn aus, werden nur Bereichsnamen abgerufen"
+          "full_map_fetch_enabled": "Vollständigen Kartenabruf aktivieren (Cloud) — wenn aus, werden nur Bereichsnamen abgerufen",
+          "keep_last_known_state": "Letzten bekannten Zustand beibehalten, statt bei Verbindungsverlust nicht verfügbar zu werden"
         }
       }
     }
