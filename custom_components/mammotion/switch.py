@@ -21,7 +21,7 @@ from pymammotion.data.model.pool_state import SpinoToggle
 from pymammotion.utility.device_type import DeviceType
 
 from . import MammotionConfigEntry
-from .const import DOMAIN
+from .const import DOMAIN, LOGGER
 from .coordinator import (
     MammotionBaseUpdateCoordinator,
     MammotionReportUpdateCoordinator,
@@ -467,6 +467,11 @@ class MammotionConfigAreaSwitchEntity(MammotionBaseEntity, SwitchEntity, Restore
         # update (icon, area assignment, …) doesn't re-send set_area_name.
         self._pushed_name: str | None = None
 
+    @property
+    def area_hash(self) -> int:
+        """Return the device map hash this switch controls."""
+        return self._area
+
     def update_name(self, new_name: str) -> None:
         """Update the display name when the device provides a real name for this area."""
         self.entity_description = dataclass_replace(
@@ -488,6 +493,33 @@ class MammotionConfigAreaSwitchEntity(MammotionBaseEntity, SwitchEntity, Restore
             if new_area_id not in self.coordinator.operation_settings.areas:
                 self.coordinator.operation_settings.areas.append(new_area_id)
         self._attr_is_on = new_area_id in self.coordinator.operation_settings.areas
+
+        # Migrate the registry identity to the new hash.  Without this the
+        # registry entry keeps the old hash, so the ghost cleanup would later
+        # delete this live, reused entity — and the user's entity_id /
+        # customizations would be lost on the replacement.
+        new_uid = f"{self.coordinator.unique_name}_{new_area_id}"
+        if self.hass is not None:
+            registry = er.async_get(self.hass)
+            # async_update_entity raises ValueError if the target unique_id is
+            # already registered — remove that entry first (it is either a
+            # ghost from a previous session or a duplicate this bug created,
+            # both superseded by the reused entity).
+            existing_id = registry.async_get_entity_id(SWITCH_DOMAIN, DOMAIN, new_uid)
+            if existing_id is not None and existing_id != self.entity_id:
+                registry.async_remove(existing_id)
+            if self.registry_entry is not None:
+                try:
+                    registry.async_update_entity(self.entity_id, new_unique_id=new_uid)
+                except ValueError:
+                    LOGGER.warning(
+                        "%s: could not migrate area unique_id %s -> %s",
+                        self.coordinator.device_name,
+                        self.registry_entry.unique_id,
+                        new_uid,
+                    )
+        self._attr_unique_id = new_uid
+
         if self.hass is not None:
             self.async_write_ha_state()
 
@@ -530,16 +562,14 @@ class MammotionConfigAreaSwitchEntity(MammotionBaseEntity, SwitchEntity, Restore
                 )
 
     async def async_update(self) -> None:
-        """Update the entity state."""
+        """Update the entity state.
+
+        Removal of stale areas is owned by :func:`async_add_area_entities`;
+        self-removal here keyed off ``map.area`` was wrong in fallback mode
+        (geometry never parses, so the dict is always empty) and made the
+        ``homeassistant.update_entity`` service delete the switch.
+        """
         self._attr_is_on = self._area in self.coordinator.operation_settings.areas
-        area_keys: set[int] = {
-            int(k)
-            for k in self.coordinator.data.map.area.keys()
-            if str(k).lstrip("-").isdigit()
-        }
-        if self._area not in area_keys:
-            await self.async_remove()
-            return
         self.async_write_ha_state()
 
     @property
@@ -584,13 +614,13 @@ def async_add_area_entities(
         if map_area_hashes - area_name_hashes:
             coordinator.hass.async_create_task(coordinator.async_get_area_list())
 
-    # Startup registry cleanup: remove stale entries from previous sessions.
-    if map_area_hashes and (all_current_areas - added_areas):
-        _async_clean_stale_area_registry_entries(coordinator, all_current_areas)
+    cleanup_safe = _area_cleanup_allowed(
+        coordinator, all_current_areas, map_area_hashes
+    )
 
     # Pre-clear auto-generated names for areas about to be removed so that
     # surviving areas can be renumbered into the freed slots without collision.
-    if map_area_hashes:
+    if cleanup_safe:
         for old_hash in added_areas - all_current_areas:
             for n in [
                 n
@@ -657,9 +687,9 @@ def async_add_area_entities(
         area_entities_by_name[new_name] = entity
         added_areas.add(area_id)
 
-    # Guard: only remove when map.area is non-empty — an empty map is a transient
-    # refresh state and must not wipe the entity registry.
-    if map_area_hashes:
+    # Guard: an empty/unsynced area list is a transient refresh state and must
+    # not wipe live entities or the entity registry.
+    if cleanup_safe:
         old_areas = added_areas - all_current_areas
         if old_areas:
             async_remove_entities(coordinator, old_areas)
@@ -670,20 +700,62 @@ def async_add_area_entities(
                 ]:
                     del area_entities_by_name[n]
 
+        # Ghost registry cleanup runs LAST: by now the dedup loop has migrated
+        # any reused entity's unique_id to its current hash, so a live entity's
+        # registry entry is never a cleanup candidate.  (Running it before the
+        # loop deleted the very entry the dedup was about to reuse.)  Live
+        # hashes are skipped as belt-and-braces.
+        live_hashes = {e.area_hash for e in area_entities_by_name.values()}
+        _async_clean_stale_area_registry_entries(
+            coordinator, all_current_areas, live_hashes
+        )
+
     if switch_entities:
         async_add_entities(switch_entities)
+
+
+def _area_cleanup_allowed(
+    coordinator: MammotionReportUpdateCoordinator,
+    all_current_areas: set[int],
+    map_area_hashes: set[int],
+) -> bool:
+    """Return True when the stale-area cleanup paths may safely run.
+
+    ``all_current_areas`` is authoritative whenever it is non-empty: area_name
+    is wholesale-replaced from the device's complete ``toapp_all_hash_name``
+    message, and map-update events only fire on saga completion or name
+    receipt — never per-frame partials.  Crucially this stays true in fallback
+    mode (geometry unparseable, ``map.area`` empty), where the old
+    ``map_area_hashes`` gate never allowed cleanup and duplicates accumulated
+    on every redraw or RTK move.
+
+    In geometry mode the dict can be partial mid-initial-fetch (e.g. Luba 1,
+    which never sends area_name), so missing hashes are not treated as stale
+    until the local map matches the device's reported bol hash.
+    """
+    if not all_current_areas:
+        return False
+    if map_area_hashes:
+        locations = coordinator.data.report_data.locations
+        bol_hash = locations[0].bol_hash if locations else 0
+        if bol_hash and not coordinator.data.map.is_map_synced(bol_hash):
+            return False
+    return True
 
 
 def _async_clean_stale_area_registry_entries(
     coordinator: MammotionReportUpdateCoordinator,
     all_current_areas: set[int],
+    live_hashes: set[int],
 ) -> None:
     """Remove area entity registry entries whose hashes are no longer on the device.
 
     Area entity unique_ids follow ``{unique_name}_{hash}`` where the suffix is
     the numeric area hash.  Any entry whose hash is absent from
     ``all_current_areas`` is removed so it cannot appear as a ghost duplicate
-    alongside the replacement entity.
+    alongside the replacement entity.  Hashes in ``live_hashes`` (owned by
+    currently tracked entity objects) are never removed here — those are
+    managed by the add/dedup/removal passes.
     """
     registry = er.async_get(coordinator.hass)
     prefix = f"{coordinator.unique_name}_"
@@ -696,7 +768,10 @@ def _async_clean_stale_area_registry_entries(
         suffix = entry.unique_id[len(prefix) :]
         if not suffix.lstrip("-").isdigit():
             continue  # non-numeric suffix → not an area entity (e.g. "is_mow")
-        if int(suffix) not in all_current_areas:
+        area_hash = int(suffix)
+        if area_hash in live_hashes:
+            continue
+        if area_hash not in all_current_areas:
             registry.async_remove(entry.entity_id)
 
 
