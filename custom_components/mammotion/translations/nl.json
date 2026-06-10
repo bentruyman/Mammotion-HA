@@ -201,6 +201,9 @@
           "reported_offline": "Offline gemeld"
         }
       },
+      "last_update": {
+        "name": "Laatste update"
+      },
       "maintenance_distance": {
         "name": "Totale kilometerstand"
       },

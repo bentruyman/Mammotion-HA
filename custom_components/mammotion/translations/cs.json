@@ -201,6 +201,9 @@
           "reported_offline": "Hlášeno offline"
         }
       },
+      "last_update": {
+        "name": "Poslední aktualizace"
+      },
       "maintenance_distance": {
         "name": "Celková vzdálenost"
       },

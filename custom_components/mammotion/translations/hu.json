@@ -201,6 +201,9 @@
           "reported_offline": "Offline jelentve"
         }
       },
+      "last_update": {
+        "name": "Utolsó frissítés"
+      },
       "task_area_status": {
         "name": "Feladatterület {name}",
         "state": {

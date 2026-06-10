@@ -201,6 +201,9 @@
           "reported_offline": "Rapporteret offline"
         }
       },
+      "last_update": {
+        "name": "Seneste opdatering"
+      },
       "maintenance_distance": {
         "name": "Samlet kilometertal"
       },

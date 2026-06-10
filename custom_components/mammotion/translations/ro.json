@@ -201,6 +201,9 @@
           "reported_offline": "Raportat offline"
         }
       },
+      "last_update": {
+        "name": "Ultima actualizare"
+      },
       "maintenance_distance": {
         "name": "Kilometraj total"
       },

@@ -74,6 +74,9 @@
       "mqtt_status": {
         "default": "mdi:cloud-check-variant"
       },
+      "last_update": {
+        "default": "mdi:clock-check-outline"
+      },
       "activity_mode": {
         "default": "mdi:information-outline"
       },

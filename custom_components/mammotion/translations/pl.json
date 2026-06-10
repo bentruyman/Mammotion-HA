@@ -201,6 +201,9 @@
           "reported_offline": "Zgłoszono offline"
         }
       },
+      "last_update": {
+        "name": "Ostatnia aktualizacja"
+      },
       "maintenance_distance": {
         "name": "Całkowity przebieg"
       },

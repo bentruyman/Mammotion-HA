@@ -201,6 +201,9 @@
           "reported_offline": "Sporočeno brez povezave"
         }
       },
+      "last_update": {
+        "name": "Zadnja posodobitev"
+      },
       "maintenance_distance": {
         "name": "Skupno opravljena pot"
       },

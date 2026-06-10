@@ -201,6 +201,9 @@
           "reported_offline": "Signalé hors ligne"
         }
       },
+      "last_update": {
+        "name": "Dernière mise à jour"
+      },
       "maintenance_distance": {
         "name": "Kilométrage total"
       },

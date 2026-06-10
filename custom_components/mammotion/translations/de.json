@@ -201,6 +201,9 @@
           "reported_offline": "Offline gemeldet"
         }
       },
+      "last_update": {
+        "name": "Letzte Aktualisierung"
+      },
       "maintenance_distance": {
         "name": "Gesamtfahrleistung"
       },

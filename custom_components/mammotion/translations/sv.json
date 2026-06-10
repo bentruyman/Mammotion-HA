@@ -201,6 +201,9 @@
           "reported_offline": "Rapporterad offline"
         }
       },
+      "last_update": {
+        "name": "Senaste uppdatering"
+      },
       "maintenance_distance": {
         "name": "Total körsträcka"
       },

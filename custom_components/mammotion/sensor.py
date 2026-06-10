@@ -3,7 +3,7 @@
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import time
+from datetime import datetime, time
 from functools import partial
 
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -132,7 +132,10 @@ class MammotionSpinoSensorEntityDescription(SensorEntityDescription):
 class MammotionWorkSensorEntityDescription(SensorEntityDescription):
     """Describes Mammotion sensor entity."""
 
-    value_fn: Callable[[MammotionReportUpdateCoordinator, MowingDevice], StateType]
+    # datetime is included for TIMESTAMP-class sensors (e.g. "last_update").
+    value_fn: Callable[
+        [MammotionReportUpdateCoordinator, MowingDevice], StateType | datetime
+    ]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -473,6 +476,14 @@ WORK_SENSOR_TYPES: tuple[MammotionWorkSensorEntityDescription, ...] = (
         ),
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    MammotionWorkSensorEntityDescription(
+        key="last_update",
+        state_class=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        native_unit_of_measurement=None,
+        value_fn=lambda coordinator, mower_data: coordinator.last_report_at,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
 )
 
 RTK_SENSOR_TYPES: tuple[MammotionRTKSensorEntityDescription, ...] = (
@@ -726,7 +737,7 @@ class MammotionWorkSensorEntity(MammotionBaseEntity, SensorEntity):
         self._attr_translation_key = entity_description.key
 
     @property
-    def native_value(self) -> StateType:
+    def native_value(self) -> StateType | datetime:
         """Return the state of the sensor."""
         return self.entity_description.value_fn(self.coordinator, self.coordinator.data)
 
