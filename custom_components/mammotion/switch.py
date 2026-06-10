@@ -16,6 +16,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from pymammotion.data.model.device import PoolCleanerDevice
+from pymammotion.data.model.hash_list import AreaHashNameList
 from pymammotion.data.model.pool_state import SpinoToggle
 from pymammotion.utility.device_type import DeviceType
 
@@ -560,6 +561,17 @@ def async_add_area_entities(
 
     switch_entities: list[MammotionConfigAreaSwitchEntity] = []
     computed = coordinator.data.map.computed_areas
+    if not computed and coordinator.data.map.area_name:
+        # computed_areas derives from the area *geometry* dict, which stays
+        # empty when the per-hash data frames can't be parsed (newer firmware
+        # sends frames pymammotion's protos don't understand yet). The
+        # name/hash list from toapp_all_hash_name still parses fine, and names
+        # + hashes are all the area switches (and start_mow) need — geometry
+        # only matters for map rendering. Fall back so areas remain usable.
+        computed = [
+            AreaHashNameList(name=a.name, hash=a.hash)
+            for a in coordinator.data.map.area_name
+        ]
     all_current_areas = {a.hash for a in computed}
     map_area_hashes: set[int] = {
         int(k) for k in coordinator.data.map.area.keys() if str(k).lstrip("-").isdigit()

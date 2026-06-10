@@ -945,6 +945,9 @@
     "device_not_ready": {
       "message": "Device is not ready."
     },
+    "invalid_mowing_areas": {
+      "message": "Mowing area(s) {entities} could not be resolved to a map area — the entity is unavailable or map data has not been synced. Sync the maps and try again."
+    },
     "pause_failed": {
       "message": "Failed to pause the mower."
     },

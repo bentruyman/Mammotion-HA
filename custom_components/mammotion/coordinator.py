@@ -103,6 +103,10 @@ DEFAULT_INTERVAL = timedelta(minutes=30)
 REPORT_INTERVAL = timedelta(minutes=5)
 DEVICE_VERSION_INTERVAL = timedelta(weeks=1)
 MAP_INTERVAL = timedelta(minutes=60)
+# Fast retry while the local map is unsynced — right after startup/reload the
+# transports are rarely ready when the first map refresh fires, and waiting a
+# full MAP_INTERVAL leaves area entities missing for up to an hour.
+MAP_RETRY_INTERVAL = timedelta(minutes=1)
 RTK_INTERVAL = timedelta(hours=5)
 SPINO_INTERVAL = timedelta(weeks=1)
 
@@ -1988,9 +1992,40 @@ class MammotionMapUpdateCoordinator(MammotionBaseUpdateCoordinator[MowerInfo]):
         """Trigger a resync when the bol hash changes."""
         # TODO setup callback to get bol hash data
 
+    def _map_needs_sync(self) -> bool:
+        """Return True while the local map state is not fully synced."""
+        device = self.manager.get_device_by_name(self.device_name)
+        if device is None:
+            return False
+        bol_hash = (
+            device.report_data.locations[0].bol_hash
+            if device.report_data.locations
+            else 0
+        )
+        if bol_hash:
+            return not device.map.is_map_synced(bol_hash)
+        # No valid report hash yet — if there is no area geometry at all the
+        # map was never fetched (e.g. restored from an empty store), so keep
+        # retrying until the device reports in and a sync can run.
+        return not device.map.area
+
+    def _adjust_update_interval(self) -> None:
+        """Poll fast until the map is synced, then back off to MAP_INTERVAL."""
+        new_interval = MAP_RETRY_INTERVAL if self._map_needs_sync() else MAP_INTERVAL
+        if self.update_interval != new_interval:
+            LOGGER.debug(
+                "%s: map coordinator interval -> %s",
+                self.device_name,
+                new_interval,
+            )
+            self.update_interval = new_interval
+
     async def _async_update_data(self) -> MowerInfo:
         """Get data from the device."""
         if data := await super()._async_update_data():
+            # Early return (offline/disabled/busy) — still make sure we retry
+            # quickly while the map is unsynced rather than in MAP_INTERVAL.
+            self._adjust_update_interval()
             return data
         device = self.manager.get_device_by_name(self.device_name)
         assert device is not None
@@ -2016,12 +2051,14 @@ class MammotionMapUpdateCoordinator(MammotionBaseUpdateCoordinator[MowerInfo]):
         except DeviceOfflineException as ex:
             if ex.iot_id == self.device.iot_id:
                 self.device_offline(device)
+                self._adjust_update_interval()
                 return device.mower_state
         except GatewayTimeoutException:
             pass
         except (ConcurrentRequestError, NoTransportAvailableError):
             pass
 
+        self._adjust_update_interval()
         _d = self.manager.get_device_by_name(self.device_name)
         assert _d is not None
         return _d.mower_state
@@ -2029,6 +2066,14 @@ class MammotionMapUpdateCoordinator(MammotionBaseUpdateCoordinator[MowerInfo]):
     async def _async_setup(self) -> None:
         """Set up coordinator with initial call to get map data."""
         await super()._async_setup()
+        # No entity subscribes to this coordinator, and a DataUpdateCoordinator
+        # without listeners never schedules periodic refreshes — making the
+        # one-shot refresh after setup the only map-sync attempt per start. If
+        # that shot fires before transports are connected (it usually does),
+        # the map never syncs and area entities stay missing. Keep a no-op
+        # listener registered so interval-based polling (fast retry until
+        # synced, then MAP_INTERVAL) actually runs.
+        self.config_entry.async_on_unload(self.async_add_listener(lambda: None))
         device = self.manager.get_device_by_name(self.device_name)
         if device is None:
             return

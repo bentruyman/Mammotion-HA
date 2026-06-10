@@ -242,6 +242,24 @@ class MammotionLawnMowerEntity(MammotionBaseEntity, LawnMowerEntity):  # type: i
                 if (entity_hash := get_entity_attribute(self.hass, entity_id, "hash"))
                 is not None
             ]
+            # An area entity with no hash attribute (unavailable, e.g. map data
+            # not yet synced after a reload) silently drops out of the list
+            # above. Sending the remainder would mow the wrong selection — and
+            # an empty list makes the device fail with "mowing area abnormal" —
+            # so refuse instead of starting a job the user didn't ask for.
+            if entity_ids and len(attributes) < len(entity_ids):
+                unresolved = [
+                    entity_id
+                    for entity_id in entity_ids
+                    if get_entity_attribute(self.hass, entity_id, "hash") is None
+                ]
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="invalid_mowing_areas",
+                    translation_placeholders={
+                        "entities": ", ".join(unresolved),
+                    },
+                )
             modify_plan = kwargs.pop("modify", False)
             plan_only = kwargs.pop("plan_only", False)
 

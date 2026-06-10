@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from asyncio import CancelledError
-from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
@@ -313,8 +312,18 @@ async def _await_device_connection(
         and (ble := handle.get_transport(TransportType.BLE))
         and ble.is_usable
     ):
-        with suppress(TransportError):
+        # Best-effort kick only — BLE failures surface as more than just
+        # TransportError (e.g. raw BleakError from an ESPHome proxy dropping
+        # the connection mid-handshake), and none of them should kill the
+        # whole config entry while cloud/MQTT transports are still available.
+        try:
             await handle.connect_transport(TransportType.BLE)
+        except Exception as ex:  # noqa: BLE001
+            LOGGER.warning(
+                "%s: BLE connect during setup failed (%s); continuing with other transports",
+                device_name,
+                ex,
+            )
     try:
         await handle.wait_until_connected(timeout=30, mqtt_stable_for=10)
     except CancelledError:
